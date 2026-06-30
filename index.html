@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transfert Visuel par QR Code (Hors-ligne)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; max-width: 500px; margin: auto; }
+        .section { border: 1px solid #ccc; padding: 20px; margin: 15px 0; border-radius: 8px; }
+        #qrcode { display: inline-block; margin-top: 10px; }
+        #reader { width: 100%; max-width: 400px; margin: auto; }
+        button { padding: 10px 20px; background: #28a745; color: white; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h2>Transfert de Fichier par "Flux" Visuel</h2>
+    <p>Idéal pour envoyer un petit fichier vers un appareil sans aucune connexion réseau.</p>
+
+    <div class="section">
+        <h3>Émetteur (Générer)</h3>
+        <input type="file" id="fileInput"><br><br>
+        <div id="qrcode"></div>
+        <p id="sendProgress"></p>
+    </div>
+
+    <div class="section">
+        <h3>Récepteur (Scanner)</h3>
+        <button id="startScan">Activer la Caméra</button>
+        <div id="reader"></div>
+        <p id="recvProgress">En attente de scan...</p>
+        <div id="downloadArea"></div>
+    </div>
+
+    <script>
+        // --- LOGIQUE ÉMETTEUR ---
+        const fileInput = document.getElementById('fileInput');
+        const qrcodeContainer = document.getElementById('qrcode');
+        const sendProgress = document.getElementById('sendProgress');
+        let qrMaker = new QRCode(qrcodeContainer, { width: 250, height: 250 });
+
+        fileInput.onchange = function() {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const base64Data = e.target.result.split(',')[1];
+                // On prépare l'envoi : on ajoute le nom du fichier au début
+                const payload = JSON.stringify({ name: file.name, data: base64Data });
+                
+                // Un QR code stable prend environ 1000 caractères max
+                const chunkSize = 1000; 
+                const chunks = [];
+                const total = Math.ceil(payload.length / chunkSize);
+                
+                for (let i = 0; i < total; i++) {
+                    // Structure de chaque morceau : "INDEX/TOTAL|DONNÉES"
+                    chunks.push(`${i}/${total}|${payload.substr(i * chunkSize, chunkSize)}`);
+                }
+
+                // Animation des QR codes à l'écran
+                let currentChunk = 0;
+                setInterval(() => {
+                    qrMaker.makeCode(chunks[currentChunk]);
+                    sendProgress.innerText = `Affichage du QR Code : ${currentChunk + 1} / ${total}`;
+                    currentChunk = (currentChunk + 1) % total;
+                }, 400); // Change de QR code toutes les 400ms
+            };
+            reader.readAsDataURL(file);
+        };
+
+        // --- LOGIQUE RÉCEPTEUR ---
+        const startScanBtn = document.getElementById('startScan');
+        const recvProgress = document.getElementById('recvProgress');
+        const downloadArea = document.getElementById('downloadArea');
+        
+        let receivedChunks = {};
+        let totalChunks = -1;
+        let fileName = "";
+        let html5QrcodeScanner;
+
+        startScanBtn.onclick = function() {
+            html5QrcodeScanner = new Html5Qrcode("reader");
+            html5QrcodeScanner.start(
+                { facingMode: "environment" }, 
+                { fps: 10, qrbox: 250 },
+                (decodedText) => {
+                    // Analyse du morceau détecté
+                    const match = decodedText.match(/^(\d+)\/(\d+)\|(.+)$/s);
+                    if (match) {
+                        const index = parseInt(match[1]);
+                        totalChunks = parseInt(match[2]);
+                        const data = match[3];
+
+                        if (!receivedChunks[index]) {
+                            receivedChunks[index] = data;
+                            const count = Object.keys(receivedChunks).length;
+                            recvProgress.innerText = `Morceaux récupérés : ${count} / ${totalChunks}`;
+
+                            // Si on a tout collecté
+                            if (count === totalChunks) {
+                                html5QrcodeScanner.stop();
+                                assembleAndDownload();
+                            }
+                        }
+                    }
+                }
+            ).catch(err => alert("Erreur caméra : " + err));
+        };
+
+        function assembleAndDownload() {
+            recvProgress.innerText = "Reconstruction du fichier...";
+            let fullPayloadString = "";
+            for (let i = 0; i < totalChunks; i++) {
+                fullPayloadString += receivedChunks[i];
+            }
+
+            try {
+                const fileObj = JSON.parse(fullPayloadString);
+                
+                // Conversion du Base64 en Blob pour le téléchargement
+                const byteCharacters = atob(fileObj.data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], {type: "application/octet-stream"});
+                
+                const url = URL.createObjectURL(blob);
+                downloadArea.innerHTML = `<a href="${url}" download="${fileObj.name}" style="font-size:20px; color:green; font-weight:bold;">Télécharger ${fileObj.name}</a>`;
+                recvProgress.innerText = "Fichier prêt !";
+            } catch (e) {
+                recvProgress.innerText = "Erreur lors du décodage.";
+            }
+        }
+    </script>
+</body>
+</html>
