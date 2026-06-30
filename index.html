@@ -52,7 +52,7 @@
                 const payload = JSON.stringify({ name: file.name, data: base64Data });
                 
                 // Un QR code stable prend environ 1000 caractères max
-                const chunkSize = 1000; 
+                const chunkSize = 500; 
                 const chunks = [];
                 const total = Math.ceil(payload.length / chunkSize);
                 
