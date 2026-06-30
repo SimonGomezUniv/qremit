@@ -67,7 +67,7 @@
                     qrMaker.makeCode(chunks[currentChunk]);
                     sendProgress.innerText = `Affichage du QR Code : ${currentChunk + 1} / ${total}`;
                     currentChunk = (currentChunk + 1) % total;
-                }, 400); // Change de QR code toutes les 400ms
+                }, 750); // Change de QR code toutes les 400ms
             };
             reader.readAsDataURL(file);
         };
