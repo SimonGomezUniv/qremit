@@ -3,23 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transfert Visuel Hyper-Vitesse (Safari iOS 60FPS)</title>
+    <title>Transfert Visuel Haute Vitesse Pro</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; padding: 10px; max-width: 500px; margin: auto; background: #121212; color: #e0e0e0; }
         .section { border: 1px solid #333; padding: 15px; margin: 15px 0; border-radius: 8px; background: #1e1e1e; }
         #qrcode-target { display: inline-block; margin: 15px auto; padding: 10px; background: white; min-height: 250px; min-width: 250px; }
         button { padding: 15px; background: #28a745; color: white; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; width: 100%; font-size: 1.1em; }
         .progress { font-weight: bold; color: #007bff; margin: 10px 0; font-size: 1.2em; }
-        /* Style du lecteur caméra minimaliste */
-        #video-preview { width: 100%; max-width: 400px; border-radius: 8px; background: #000; transform: scaleX(-1); /* Effet miroir pour la caméra frontale si besoin */ }
-        #canvas-capture { display: none; /* Canvas caché pour le traitement */ }
+        #video-preview { width: 100%; max-width: 400px; border-radius: 8px; background: #000; }
+        #canvas-capture { display: none; }
     </style>
 </head>
 <body>
 
-    <h2>⚡ Transfert Écran-Caméra Hyper-Vitesse</h2>
-    <p>Cette version utilise l'API native de l'iPhone pour scanner à 60 FPS.</p>
+    <h2>⚡ Transfert Écran-Caméra Haute Vitesse</h2>
+    <p>Version compatible iPhone récents avec moteur de secours automatique.</p>
 
     <div class="section">
         <h3>1. Émetteur (Chrome)</h3>
@@ -30,15 +30,15 @@
 
     <div class="section">
         <h3>2. Récepteur (Safari iOS)</h3>
-        <button id="startScan">Démarrer la Capture (API Native)</button><br><br>
+        <button id="startScan">Démarrer la Capture Caméra</button><br><br>
         <video id="video-preview" autoplay playsinline></video>
         <canvas id="canvas-capture"></canvas> 
-        <div id="recvProgress" class="progress">Prêt à scanner...</div>
+        <div id="recvProgress" class="progress">Prêt...</div>
         <div id="downloadArea"></div>
     </div>
 
     <script>
-        // --- LOGIQUE ÉMETTEUR (Optimisée) ---
+        // --- LOGIQUE ÉMETTEUR ---
         const fileInput = document.getElementById('fileInput');
         const qrContainer = document.getElementById('qrcode-target');
         const sendProgress = document.getElementById('sendProgress');
@@ -56,24 +56,25 @@
                 const base64Data = e.target.result.split(',')[1];
                 const payload = JSON.stringify({ n: file.name, d: base64Data });
                 
-                const chunkSize = 2000; 
+                // 1500 caractères : compromis parfait pour que l'iPhone lise instantanément sans forcer sur la mise au point
+                const chunkSize = 1500; 
                 const chunks = [];
                 for (let i = 0; i < payload.length; i += chunkSize) chunks.push(payload.substr(i, chunkSize));
 
                 let currentChunk = 0;
                 const total = chunks.length;
 
-                // Fréquence d'affichage : 100ms
+                // Vitesse d'affichage : 120ms (très rapide mais stable pour la caméra)
                 intervalId = setInterval(() => {
                     qrMaker.makeCode(`${currentChunk}/${total}|${chunks[currentChunk]}`);
                     sendProgress.innerText = `Émission : Bloc ${currentChunk + 1} / ${total}`;
                     currentChunk = (currentChunk + 1) % total;
-                }, 100); 
+                }, 120); 
             };
             reader.readAsDataURL(file);
         };
 
-        // --- LOGIQUE RÉCEPTEUR (API Native Safari iOS) ---
+        // --- LOGIQUE RÉCEPTEUR ---
         const startScanBtn = document.getElementById('startScan');
         const video = document.getElementById('video-preview');
         const canvas = document.getElementById('canvas-capture');
@@ -84,74 +85,59 @@
         let receivedChunks = {};
         let totalChunks = -1;
         let isScanning = false;
-        let barcodeDetector = null;
+        let useNative = ('BarcodeDetector' in window);
 
-        // Étape 1 : Vérifier et activer le BarcodeDetector natif
-        async function initNativeScanner() {
-            if (!('BarcodeDetector' in window)) {
-                recvProgress.innerText = "❌ Votre iPhone est trop vieux (API Native manquante).";
-                return false;
-            }
-            // Activer uniquement le support des QR codes pour plus de vitesse
-            barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
-            return true;
-        }
-
-        // Étape 2 : Démarrer la capture caméra
         startScanBtn.onclick = async function() {
             if (isScanning) return;
-            const nativeReady = await initNativeScanner();
-            if (!nativeReady) return;
 
             try {
-                // Demander la caméra arrière (environment) avec une résolution moyenne (plus rapide à traiter)
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } } 
                 });
                 video.srcObject = stream;
                 isScanning = true;
-                recvProgress.innerText = "Caméra active. Synchronisation...";
+                recvProgress.innerText = useNative ? "Mode : Capteur Matériel Actif..." : "Mode : Optimisation Logicielle Active...";
                 startScanBtn.style.display = 'none';
 
-                // Lancer la boucle de traitement d'image
                 requestAnimationFrame(scanFrame);
             } catch (err) {
-                alert("Erreur d'accès caméra : " + err);
+                alert("Erreur d'accès caméra. Note : iOS impose l'utilisation de HTTPS ou localhost pour ouvrir la caméra. " + err);
             }
         };
 
-        // Étape 3 : La boucle de traitement à 60 FPS
+        let nativeDetector = useNative ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
+
         async function scanFrame() {
             if (!isScanning) return;
 
-            // Vérifier si la vidéo est prête
             if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                // Adapter la taille du canvas caché à la vidéo
                 if (canvas.width !== video.videoWidth) {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                 }
 
-                // Dessiner l'image binaire brute dans le canvas caché
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                try {
-                    // Utiliser l'API Native pour détecter les codes (Ultra-rapide)
-                    const barcodes = await barcodeDetector.detect(canvas);
-                    
-                    if (barcodes.length > 0) {
-                        handleDecodedText(barcodes[0].rawValue);
+                if (useNative) {
+                    // Tentative Native (Rapide)
+                    try {
+                        const barcodes = await nativeDetector.detect(canvas);
+                        if (barcodes.length > 0) handleDecodedText(barcodes[0].rawValue);
+                    } catch (e) { 
+                        useNative = false; // Bascule automatique sur jsQR en cas de blocage Safari
                     }
-                } catch (err) {
-                    // Ignorer les erreurs de détection continue
+                } else {
+                    // Solution de secours ultra-optimisée (jsQR)
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+                    if (code) {
+                        handleDecodedText(code.data);
+                    }
                 }
             }
-
-            // Relancer la boucle immédiatement ( requestAnimationFrame = synchronisé sur l'écran 60Hz)
             requestAnimationFrame(scanFrame);
         }
 
-        // Étape 4 : Gestion des données capturées (Inchangée mais rapide)
         function handleDecodedText(decodedText) {
             const pipeIndex = decodedText.indexOf('|');
             const slashIndex = decodedText.indexOf('/');
@@ -164,11 +150,11 @@
                 if (!receivedChunks[index]) {
                     receivedChunks[index] = data;
                     const count = Object.keys(receivedChunks).length;
-                    recvProgress.innerText = `🔥 Capturé : ${count} / ${totalChunks}`;
+                    recvProgress.innerText = `⚡ Fragments capturés : ${count} / ${totalChunks}`;
 
                     if (count === totalChunks) {
                         isScanning = false;
-                        video.srcObject.getTracks().forEach(track => track.stop()); // Arrêter la caméra
+                        video.srcObject.getTracks().forEach(track => track.stop());
                         video.style.display = 'none';
                         assembleFile();
                     }
@@ -176,7 +162,6 @@
             }
         }
 
-        // Étape 5 : Reconstruction (Inchangée)
         function assembleFile() {
             recvProgress.innerText = "Recomposition du fichier...";
             let fullPayload = "";
@@ -193,7 +178,7 @@
                 downloadArea.innerHTML = `<a href="${url}" download="${fileObj.n}" style="display:inline-block; margin-top:15px; padding:15px; background:#007bff; color:white; text-decoration:none; border-radius:4px; font-weight:bold; font-size:1.2em;">💾 Enregistrer : ${fileObj.n}</a>`;
                 recvProgress.innerText = "✓ Fichier prêt !";
             } catch (e) {
-                recvProgress.innerText = "❌ Corruption des données.";
+                recvProgress.innerText = "❌ Erreur de décodage.";
                 receivedChunks = {};
             }
         }
