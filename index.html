@@ -3,164 +3,141 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transfert Visuel Haute Densité (RGB Multiplexing)</title>
+    <title>Transfert Visuel Haute Vitesse</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://unpkg.com/html5-qrcode"></script>
+        <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 10px; max-width: 600px; margin: auto; background: #121212; color: #e0e0e0; }
+        body { font-family: sans-serif; text-align: center; padding: 10px; max-width: 500px; margin: auto; background: #121212; color: #e0e0e0; }
         .section { border: 1px solid #333; padding: 15px; margin: 15px 0; border-radius: 8px; background: #1e1e1e; }
-        .canvas-container { position: relative; width: 300px; height: 300px; margin: 10px auto; background: #000; }
-        canvas { position: absolute; top:0; left:0; width: 300px; height: 300px; }
-        /* Les QR Codes cachés servant à la composition RGB */
-        #hidden-qr { display: none; }
-        button { padding: 12px 24px; background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; }
-        #reader { width: 100%; max-width: 450px; margin: auto; border: 1px solid #444; }
+        #qrcode-target { display: inline-block; margin: 15px auto; padding: 10px; background: white; border-radius: 4px; min-height: 250px; min-width: 250px; }
+        button { padding: 12px 24px; background: #28a745; color: white; border: none; cursor: pointer; font-weight: bold; border-radius: 4px; width: 100%; }
+        #reader { width: 100%; max-width: 400px; margin: auto; border: 1px solid #444; background: #000; }
+        .progress { font-weight: bold; color: #007bff; margin: 10px 0; }
     </style>
 </head>
 <body>
 
-    <h2>⚡ Transfert Écran-Caméra Haute Densité</h2>
-    <p>Inspiré du multiplexage chromatique pour maximiser le débit sans réseau.</p>
+    <h2>⚡ Transfert Écran-Caméra Ultra-Rapide</h2>
+    <p>Cette version corrige l'affichage et pousse le rafraîchissement au maximum supporté par l'iPhone.</p>
 
     <div class="section">
-        <h3>Émetteur (Chrome)</h3>
-        <input type="file" id="fileInput"><br><br>
-        <div class="canvas-container">
-            <canvas id="rgbCanvas" width="300" height="300"></canvas>
-        </div>
-        <p id="sendProgress">En attente de fichier...</p>
-        <div id="hidden-qr"></div>
+        <h3>1. Émetteur (Chrome)</h3>
+        <input type="file" id="fileInput"><br>
+        <div id="qrcode-target"></div>
+        <div id="sendProgress" class="progress">En attente d'un fichier...</div>
     </div>
 
     <div class="section">
-        <h3>Récepteur (Safari iOS hors-ligne)</h3>
-        <button id="startScan">Démarrer la capture Caméra (60 FPS)</button><br><br>
+        <h3>2. Récepteur (Safari iOS)</h3>
+        <button id="startScan">Démarrer la Caméra (60 FPS)</button><br><br>
         <div id="reader"></div>
-        <p id="recvProgress">Prêt à scanner...</p>
+        <div id="recvProgress" class="progress">Prêt à scanner...</div>
         <div id="downloadArea"></div>
     </div>
 
     <script>
-        // --- LOGIQUE ÉMETTEUR (MULTIPLEXAGE RGB) ---
+        // --- LOGIQUE ÉMETTEUR ---
         const fileInput = document.getElementById('fileInput');
-        const rgbCanvas = document.getElementById('rgbCanvas');
-        const ctx = rgbCanvas.getContext('2d');
+        const qrContainer = document.getElementById('qrcode-target');
         const sendProgress = document.getElementById('sendProgress');
-        
-        // Conteneurs temporaires invisibles pour générer les QR monochromes
-        const hiddenDiv = document.getElementById('hidden-qr');
-        
+        let intervalId = null;
+
+        // Instance unique du générateur QR Code (Taille 250x250, Correction L = Low pour maximiser le stockage)
+        let qrMaker = new QRCode(qrContainer, {
+            width: 250,
+            height: 250,
+            correctLevel: QRCode.CorrectLevel.L
+        });
+
         fileInput.onchange = function() {
             const file = fileInput.files[0];
             if (!file) return;
+
+            // Nettoyer un ancien envoi si existant
+            if (intervalId) clearInterval(intervalId);
 
             const reader = new FileReader();
             reader.onload = function(e) {
                 const base64Data = e.target.result.split(',')[1];
                 const payload = JSON.stringify({ n: file.name, d: base64Data });
                 
-                // Taille de bloc accrue (Densité supérieure, Correction d'erreur basse "L")
-                const chunkSize = 1800; 
+                // Densité maximale : 2000 caractères par QR Code grâce à la correction 'L'
+                const chunkSize = 2000; 
                 const chunks = [];
                 for (let i = 0; i < payload.length; i += chunkSize) {
                     chunks.push(payload.substr(i, chunkSize));
                 }
 
-                let frameIndex = 0;
-                
-                // Boucle d'envoi haute fréquence (~120ms par transition)
-                setInterval(() => {
-                    if (chunks.length === 0) return;
+                let currentChunk = 0;
+                const total = chunks.length;
 
-                    // On pioche 3 morceaux différents à encoder simultanément dans R, G et B
-                    const idxR = frameIndex % chunks.length;
-                    const idxG = (frameIndex + 1) % chunks.length;
-                    const idxB = (frameIndex + 2) % chunks.length;
-
-                    generateRGBFrame(
-                        `${idxR}:${chunks.length}:${chunks[idxR]}`,
-                        `${idxG}:${chunks.length}:${chunks[idxG]}`,
-                        `${idxB}:${chunks.length}:${chunks[idxB]}`
-                    );
-
-                    sendProgress.innerText = `Flux actif - Index trame : ${frameIndex} (Débit théorique triplé)`;
-                    frameIndex += 3;
-                }, 120); 
+                // Clignotement ultra-rapide (100ms) pour bombarder la caméra de l'iPhone
+                intervalId = setInterval(() => {
+                    // Format optimisé pour un parsing rapide : "index/total|données"
+                    const dataString = `${currentChunk}/${total}|${chunks[currentChunk]}`;
+                    qrMaker.makeCode(dataString);
+                    
+                    sendProgress.innerText = `Émission : Bloc ${currentChunk + 1} / ${total}`;
+                    currentChunk = (currentChunk + 1) % total;
+                }, 100); 
             };
             reader.readAsDataURL(file);
         };
 
-        // Fusionne 3 chaînes de données distinctes dans les canaux Rouge, Vert et Bleu du Canvas
-        function generateRGBFrame(dataR, dataG, dataB) {
-            hiddenDiv.innerHTML = "<div id='qrR'></div><div id='qrG'></div><div id='qrB'></div>";
-            
-            // Initialisation des QR avec le niveau de correction "L" (Low = 7% de redondance pour maximiser l'espace)
-            let q1 = new QRCode(document.getElementById('qrR'), {text: dataR, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.L});
-            let q2 = new QRCode(document.getElementById('qrG'), {text: dataG, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.L});
-            let q3 = new QRCode(document.getElementById('qrB'), {text: dataB, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.L});
-
-            // Attendre un court instant que les images de la bibliothèque soient générées, puis fusionner les canaux
-            setTimeout(() => {
-                const imgR = document.querySelector('#qrR img');
-                const imgG = document.querySelector('#qrG img');
-                const imgB = document.querySelector('#qrB img');
-
-                if(imgR && imgG && imgB) {
-                    ctx.clearRect(0, 0, 300, 300);
-                    
-                    // Code de fusion pixel par pixel (Algorithme d'assemblage chromatique)
-                    ctx.fillStyle = "#000";
-                    ctx.fillRect(0,0,300,300);
-                    
-                    // Pour simplifier l'exemple et assurer la rétrocompatibilité des lecteurs standard,
-                    // le canvas va ici afficher une alternance ultra-rapide et optimisée à l'écran.
-                    // (Le décodage matriciel brut RVB nécessitant OpenCV côté client).
-                    ctx.drawImage(imgR, 0, 0);
-                }
-            }, 20);
-        }
-
-        // --- LOGIQUE RÉCEPTEUR (CAPTURE OPTIMISÉE) ---
+        // --- LOGIQUE RÉCEPTEUR ---
         const startScanBtn = document.getElementById('startScan');
         const recvProgress = document.getElementById('recvProgress');
         const downloadArea = document.getElementById('downloadArea');
         
         let receivedChunks = {};
         let totalChunks = -1;
+        let html5QrcodeScanner = null;
 
         startScanBtn.onclick = function() {
-            const html5QrcodeScanner = new Html5Qrcode("reader");
+            if (html5QrcodeScanner) return; // Évite les doubles lancements
+
+            html5QrcodeScanner = new Html5Qrcode("reader");
             
-            // Configuration agressive : On pousse la caméra à 60 FPS si le capteur de l'iPhone le permet
+            // Forcer le capteur à 60 FPS avec une zone de scan carrée
             html5QrcodeScanner.start(
                 { facingMode: "environment" }, 
-                { fps: 60, qrbox: { width: 280, height: 280 }, experimentalFeatures: { useBarCodeDetectorIfSupported: true } },
+                { 
+                    fps: 60, 
+                    qrbox: { width: 250, height: 250 },
+                    experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
+                },
                 (decodedText) => {
-                    const firstColon = decodedText.indexOf(':');
-                    const secondColon = decodedText.indexOf(':', firstColon + 1);
+                    // Parsing ultra-rapide sans Regex lourde
+                    const pipeIndex = decodedText.indexOf('|');
+                    const slashIndex = decodedText.indexOf('/');
                     
-                    if (firstColon !== -1 && secondColon !== -1) {
-                        const index = parseInt(decodedText.substring(0, firstColon));
-                        totalChunks = parseInt(decodedText.substring(firstColon + 1, secondColon));
-                        const data = decodedText.substring(secondColon + 1);
+                    if (pipeIndex !== -1 && slashIndex !== -1) {
+                        const index = parseInt(decodedText.substring(0, slashIndex));
+                        totalChunks = parseInt(decodedText.substring(slashIndex + 1, pipeIndex));
+                        const data = decodedText.substring(pipeIndex + 1);
 
                         if (!receivedChunks[index]) {
                             receivedChunks[index] = data;
                             const count = Object.keys(receivedChunks).length;
-                            recvProgress.innerText = `Lecture haute vitesse : ${count} / ${totalChunks} blocs synchronisés`;
+                            recvProgress.innerText = `Fragments capturés : ${count} / ${totalChunks}`;
 
+                            // Dès que l'iPhone a capturé tous les morceaux uniques
                             if (count === totalChunks) {
-                                html5QrcodeScanner.stop();
-                                assembleFile();
+                                html5QrcodeScanner.stop().then(() => {
+                                    assembleFile();
+                                });
                             }
                         }
                     }
+                },
+                (errorMessage) => {
+                    // On ignore les erreurs de scan continu pour ne pas ralentir le CPU
                 }
-            ).catch(err => alert("Ajustement caméra requis : " + err));
+            ).catch(err => alert("Erreur d'accès caméra : " + err));
         };
 
         function assembleFile() {
-            recvProgress.innerText = "Recomposition de la chaîne binaire...";
+            recvProgress.innerText = "Recomposition du fichier...";
             let fullPayload = "";
             for (let i = 0; i < totalChunks; i++) {
                 fullPayload += receivedChunks[i];
@@ -168,6 +145,8 @@
 
             try {
                 const fileObj = JSON.parse(fullPayload);
+                
+                // Conversion Base64 -> Blob binaire
                 const byteCharacters = atob(fileObj.d);
                 const byteNumbers = new Array(byteCharacters.length);
                 for (let i = 0; i < byteCharacters.length; i++) {
@@ -176,10 +155,11 @@
                 const blob = new Blob([new Uint8Array(byteNumbers)], {type: "application/octet-stream"});
                 const url = URL.createObjectURL(blob);
                 
-                downloadArea.innerHTML = `<a href="${url}" download="${fileObj.n}" style="font-size:18px; color:#28a745; font-weight:bold;">💾 Enregistrer : ${fileObj.n}</a>`;
-                recvProgress.innerText = "Fichier extrait avec succès !";
+                downloadArea.innerHTML = `<a href="${url}" download="${fileObj.n}" style="display:inline-block; margin-top:15px; padding:15px; background:#007bff; color:white; text-decoration:none; border-radius:4px; font-weight:bold;">💾 Télécharger : ${fileObj.n}</a>`;
+                recvProgress.innerText = "✓ Fichier prêt au téléchargement !";
             } catch (e) {
-                recvProgress.innerText = "Erreur de parité ou fragment manquant.";
+                recvProgress.innerText = "❌ Erreur de corruption (Données manquantes). Recommencez.";
+                receivedChunks = {}; // Reset
             }
         }
     </script>
